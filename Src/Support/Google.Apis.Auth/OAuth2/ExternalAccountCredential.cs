@@ -40,6 +40,7 @@ namespace Google.Apis.Auth.OAuth2
     /// </summary>
     public abstract class ExternalAccountCredential : ServiceCredential
     {
+        private readonly ISubjectTokenProvider _subjectTokenProvider;
         private const string GrantType = "urn:ietf:params:oauth:grant-type:token-exchange";
         private const string RequestedTokenType = "urn:ietf:params:oauth:token-type:access_token";
 
@@ -214,8 +215,9 @@ namespace Google.Apis.Auth.OAuth2
         /// </summary>
         internal Lazy<ImpersonatedCredential> ImplicitlyImpersonated { get; }
 
-        internal ExternalAccountCredential(Initializer initializer) : base(initializer)
+        internal ExternalAccountCredential(Initializer initializer, ISubjectTokenProvider subjectTokenProvider) : base(initializer)
         {
+            _subjectTokenProvider = subjectTokenProvider.ThrowIfNull(nameof(subjectTokenProvider));
             Audience = initializer.Audience;
             SubjectTokenType = initializer.SubjectTokenType;
             ServiceAccountImpersonationUrl = initializer.ServiceAccountImpersonationUrl;
@@ -269,7 +271,8 @@ namespace Google.Apis.Auth.OAuth2
         /// <summary>
         /// Gets the subject token to be exchanged for the access token.
         /// </summary>
-        protected abstract Task<string> GetSubjectTokenAsyncImpl(CancellationToken taskCancellationToken);
+        protected virtual async Task<string> GetSubjectTokenAsyncImpl(CancellationToken taskCancellationToken) =>
+            await _subjectTokenProvider.GetSubjectTokenAsync(taskCancellationToken).ConfigureAwait(false);
 
         private async Task<string> GetSubjectTokenAsync(CancellationToken taskCancellationTokne)
         {

@@ -18,20 +18,48 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
+
 namespace Google.Apis.Tests.Mocks
 {
-    /// <summary>A mock of <see cref="HttpMessageHandler"/> that records the content of an incoming request.</summary>
-    class MockMessageHandler : HttpMessageHandler
+    /// <summary>
+    /// A mock of <see cref="HttpMessageHandler"/> that records incoming requests and returns queued responses.
+    /// </summary>
+    public class MockMessageHandler : HttpMessageHandler
     {
-        public string RequestContent { get; set; }
+        public List<HttpRequestMessage> Requests { get; } = new List<HttpRequestMessage>();
+        public Queue<HttpResponseMessage> Responses { get; } = new Queue<HttpResponseMessage>();
+        public string LastRequestContent { get; private set; }
+        public string RequestContent { get; private set; }
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
-            // TODO: Investigate making this async. The fact that this returns a null *task*
-            // at the moment (not a task with a null result) is alarming.
-            RequestContent = request.Content.ReadAsStringAsync().Result;
-            return null;
+            Requests.Add(request);
+            if (request.Content != null)
+            {
+                // For new tests and better async practice
+                LastRequestContent = await request.Content.ReadAsStringAsync().ConfigureAwait(false);
+                // For compatibility with old tests
+                RequestContent = request.Content.ReadAsStringAsync().Result;
+            }
+
+            if (Responses.Count > 0)
+            {
+                return Responses.Dequeue();
+            }
+
+            // Default response or throw, depending on desired behavior if no response is queued.
+            // For now, let's return a default to avoid breaking tests that might not queue a response
+            // if they don't care about the SendAsync result directly.
+            // However, the tests in CustomSubjectTokenExternalAccountCredentialTests *do* care.
+            // A better approach for those tests is to ensure a response is always queued.
+            // Throwing here might be better to catch tests that don't set up responses.
+            throw new System.InvalidOperationException("No response configured for MockMessageHandler.");
         }
     }
 }

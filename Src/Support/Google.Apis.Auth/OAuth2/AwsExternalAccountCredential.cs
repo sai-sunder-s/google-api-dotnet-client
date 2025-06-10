@@ -25,6 +25,17 @@ using System.Threading.Tasks;
 namespace Google.Apis.Auth.OAuth2
 {
     /// <summary>
+    /// A dummy subject token provider that should never be called if GetSubjectTokenAsyncImpl is overridden.
+    /// </summary>
+    internal class DummyAwsSubjectTokenProvider : ISubjectTokenProvider
+    {
+        public Task<string> GetSubjectTokenAsync(CancellationToken taskCancellationToken) =>
+            Task.FromException<string>(new InvalidOperationException(
+                $"{nameof(DummyAwsSubjectTokenProvider)} should not be called. " +
+                "The GetSubjectTokenAsyncImpl method on AwsExternalAccountCredential should be overridden and used instead."));
+    }
+
+    /// <summary>
     /// AWS credentials as described in
     /// https://google.aip.dev/auth/4117#determining-the-subject-token-in-aws.
     /// </summary>
@@ -105,7 +116,7 @@ namespace Google.Apis.Auth.OAuth2
         /// </summary>
         internal string ImdsV2SessionTokenUrl { get; }
 
-        internal AwsExternalAccountCredential(Initializer initializer) : base(initializer)
+        internal AwsExternalAccountCredential(Initializer initializer) : base(initializer, new DummyAwsSubjectTokenProvider())
         {
             AwsMetadataServerClient.ValidateMetadataServerUrlIfAny(initializer.ImdsV2SessionTokenUrl, "IMDS V2 Session Token");
             AwsMetadataServerClient.ValidateMetadataServerUrlIfAny(initializer.RegionUrl, "Region");

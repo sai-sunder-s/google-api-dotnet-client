@@ -16,6 +16,7 @@ limitations under the License.
 
 using Google.Apis.Http;
 using Google.Apis.Json;
+using Google.Apis.Util;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
@@ -23,6 +24,43 @@ using System.Threading.Tasks;
 
 namespace Google.Apis.Auth.OAuth2
 {
+    internal class FileSourcedSubjectTokenProvider : ISubjectTokenProvider
+    {
+        private readonly string _subjectTokenFilePath;
+        private readonly string _subjectTokenJsonFieldName;
+
+        internal FileSourcedSubjectTokenProvider(string subjectTokenFilePath, string subjectTokenJsonFieldName)
+        {
+            _subjectTokenFilePath = subjectTokenFilePath.ThrowIfNullOrEmpty(nameof(subjectTokenFilePath));
+            _subjectTokenJsonFieldName = subjectTokenJsonFieldName; // Can be null or empty
+        }
+
+        public async Task<string> GetSubjectTokenAsync(CancellationToken taskCancellationToken)
+        {
+            // Logic from the original FileSourcedExternalAccountCredential.GetSubjectTokenAsyncImpl
+            var fileContent = await ReadSubjectTokenFileContentAsync().ConfigureAwait(false);
+            string subjectToken;
+
+            if (string.IsNullOrEmpty(_subjectTokenJsonFieldName))
+            {
+                subjectToken = fileContent;
+            }
+            else
+            {
+                var jsonResponse = NewtonsoftJsonSerializer.Instance.Deserialize<Dictionary<string, string>>(fileContent);
+                subjectToken = jsonResponse[_subjectTokenJsonFieldName];
+            }
+            return subjectToken;
+
+            async Task<string> ReadSubjectTokenFileContentAsync()
+            {
+                // Ensure System.IO is imported
+                using var reader = File.OpenText(_subjectTokenFilePath);
+                return await reader.ReadToEndAsync().ConfigureAwait(false);
+            }
+        }
+    }
+
     /// <summary>
     /// File-sourced credentials as described in
     /// https://google.aip.dev/auth/4117#determining-the-subject-token-in-file-sourced-credentials.
@@ -71,7 +109,8 @@ namespace Google.Apis.Auth.OAuth2
         /// </summary>
         public string SubjectTokenJsonFieldName { get; }
 
-        internal FileSourcedExternalAccountCredential(Initializer initializer) : base(initializer)
+        internal FileSourcedExternalAccountCredential(Initializer initializer) :
+            base(initializer, new FileSourcedSubjectTokenProvider(initializer.SubjectTokenFilePath, initializer.SubjectTokenJsonFieldName))
         {
             SubjectTokenFilePath = initializer.SubjectTokenFilePath;
             SubjectTokenJsonFieldName = initializer.SubjectTokenJsonFieldName;
@@ -86,31 +125,7 @@ namespace Google.Apis.Auth.OAuth2
                 ServiceAccountImpersonationUrl = null
             }));
 
-        /// <inheritdoc/>
-        protected override async Task<string> GetSubjectTokenAsyncImpl(CancellationToken taskCancellationToken)
-        {
-            var fileContent = await ReadSubjectTokenFileContentAsync().ConfigureAwait(false);
-            string subjectToken;
-
-            if (string.IsNullOrEmpty(SubjectTokenJsonFieldName))
-            {
-                subjectToken = fileContent;
-            }
-            else
-            {
-                var jsonResponse = NewtonsoftJsonSerializer.Instance.Deserialize<Dictionary<string, string>>(fileContent);
-
-                subjectToken = jsonResponse[SubjectTokenJsonFieldName];
-            }
-
-            return subjectToken;
-
-            async Task<string> ReadSubjectTokenFileContentAsync()
-            {
-                using var reader = File.OpenText(SubjectTokenFilePath);
-                return await reader.ReadToEndAsync().ConfigureAwait(false);
-            }
-        }
+        // GetSubjectTokenAsyncImpl is now handled by the base class via the FileSourcedSubjectTokenProvider.
 
         /// <inheritdoc/>
         string IGoogleCredential.QuotaProject => QuotaProject;

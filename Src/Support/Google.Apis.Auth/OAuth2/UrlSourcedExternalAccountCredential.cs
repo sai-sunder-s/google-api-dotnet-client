@@ -16,6 +16,7 @@ limitations under the License.
 
 using Google.Apis.Http;
 using Google.Apis.Json;
+using Google.Apis.Util;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -26,6 +27,43 @@ using System.Threading.Tasks;
 
 namespace Google.Apis.Auth.OAuth2
 {
+    internal class UrlSourcedSubjectTokenProvider : ISubjectTokenProvider
+    {
+        private readonly string _subjectTokenUrl;
+        private readonly IReadOnlyDictionary<string, string> _headers;
+        private readonly string _subjectTokenJsonFieldName;
+        private readonly HttpClient _httpClient;
+
+        internal UrlSourcedSubjectTokenProvider(string subjectTokenUrl, IReadOnlyDictionary<string, string> headers, string subjectTokenJsonFieldName, HttpClient httpClient)
+        {
+            _subjectTokenUrl = subjectTokenUrl.ThrowIfNullOrEmpty(nameof(subjectTokenUrl));
+            _headers = headers ?? new ReadOnlyDictionary<string, string>(new Dictionary<string, string>());
+            _subjectTokenJsonFieldName = subjectTokenJsonFieldName; // Can be null or empty
+            _httpClient = httpClient.ThrowIfNull(nameof(httpClient));
+        }
+
+        public async Task<string> GetSubjectTokenAsync(CancellationToken taskCancellationToken)
+        {
+            var httpRequest = new HttpRequestMessage(HttpMethod.Get, _subjectTokenUrl);
+            foreach (var headerPair in _headers)
+            {
+                httpRequest.Headers.TryAddWithoutValidation(headerPair.Key, headerPair.Value);
+            }
+
+            var response = await _httpClient.SendAsync(httpRequest, taskCancellationToken).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+            var responseText = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+
+            if (string.IsNullOrEmpty(_subjectTokenJsonFieldName))
+            {
+                return responseText;
+            }
+
+            var jsonResponse = NewtonsoftJsonSerializer.Instance.Deserialize<Dictionary<string, string>>(responseText);
+            return jsonResponse[_subjectTokenJsonFieldName];
+        }
+    }
+
     /// <summary>
     /// URL-sourced credentials as described in
     /// https://google.aip.dev/auth/4117#determining-the-subject-token-in-microsoft-azure-and-url-sourced-credentials.
@@ -88,7 +126,8 @@ namespace Google.Apis.Auth.OAuth2
         /// </summary>
         public string SubjectTokenJsonFieldName { get; }
 
-        internal UrlSourcedExternalAccountCredential(Initializer initializer) : base(initializer)
+        internal UrlSourcedExternalAccountCredential(Initializer initializer) :
+            base(initializer, new UrlSourcedSubjectTokenProvider(initializer.SubjectTokenUrl, new ReadOnlyDictionary<string, string>(initializer.Headers), initializer.SubjectTokenJsonFieldName, initializer.HttpClientFactory.CreateHttpClient(new CreateHttpClientArgs())))
         {
             SubjectTokenUrl = initializer.SubjectTokenUrl;
             Headers = initializer.Headers is null
@@ -106,28 +145,7 @@ namespace Google.Apis.Auth.OAuth2
                 ServiceAccountImpersonationUrl = null
             }));
 
-        /// <inheritdoc/>
-        protected async override Task<string> GetSubjectTokenAsyncImpl(CancellationToken taskCancellationToken)
-        {
-            var httpRequest = new HttpRequestMessage(HttpMethod.Get, SubjectTokenUrl);
-            foreach (var headerPair in Headers)
-            {
-                httpRequest.Headers.Add(headerPair.Key, headerPair.Value);
-            }
-
-            var response = await HttpClient.SendAsync(httpRequest, taskCancellationToken).ConfigureAwait(false);
-            response.EnsureSuccessStatusCode();
-            var responseText = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-
-            if (string.IsNullOrEmpty(SubjectTokenJsonFieldName))
-            {
-                return responseText;
-            }
-
-            var jsonResponse = NewtonsoftJsonSerializer.Instance.Deserialize<Dictionary<string, string>>(responseText);
-
-            return jsonResponse[SubjectTokenJsonFieldName];
-        }
+        // GetSubjectTokenAsyncImpl is now handled by the base class via the UrlSourcedSubjectTokenProvider.
 
         /// <inheritdoc/>
         string IGoogleCredential.QuotaProject => QuotaProject;
